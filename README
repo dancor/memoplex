@@ -1,0 +1,25 @@
+memoplex is a notifier service.
+one-line messages are sent in to stdin:
+
+~ echo hi | memoplex
+
+and messages are read with -r:
+
+~ memoplex -r | something_that_reads_the_messages
+
+which will run forever, outputting messages as they appear.
+any number of 'memoplex -r' can be run; messages will be sent
+to all of them.  also, when a 'memoplex -r' is initially run,
+any old messages from the past five minutes will be flushed.
+
+memoplex is permissioned per-user and only available locally.
+but you can use ssh to remotely send and recieve messages
+securely, e.g.:
+~ ssh myserver 'memoplex -r' | something_that_reads_the_messages
+
+to recap:
+- persist all messages for at least some time (five minutes)
+- persist messages until some client reads them
+- messages can be sent to multiple clients
+- any client can submit a message
+- postgres-backed
