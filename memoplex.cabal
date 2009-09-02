@@ -1,0 +1,15 @@
+name:            memoplex
+version:         0.1
+license:         GPL
+license-file:    LICENSE
+author:          dan corson <danl@alum.mit.edu>
+synopsis:        <syn>
+build-type:      Simple
+build-depends:   base, haskell98
+
+exposed-modules: Data.memoplex
+hs-source-dirs:  src
+
+executable:      memoplex
+main-is:         Main.hs
+hs-source-dirs:  src
