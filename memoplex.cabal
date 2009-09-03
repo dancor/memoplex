@@ -5,7 +5,7 @@ license-file:    LICENSE
 author:          dan corson <danl@alum.mit.edu>
 synopsis:        notifier service
 build-type:      Simple
-build-depends:   base, haskell98
+build-depends:   base, directory, epoll, filepath, haskell98, network, unix
 
 executable:      memoplex
 main-is:         Main.hs
