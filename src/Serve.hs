@@ -1,24 +1,26 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Main where
+module Serve where
 import Prelude hiding (catch)
 
+import Control.Applicative
+import Control.Exception (finally, catch, IOException)
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Monad (forever, forM, filterM, liftM, when)
+import Data.Maybe
 import Network (listenOn, accept, sClose, Socket,
                 withSocketsDo, PortID(..))
 import System.IO
 import System.Environment (getArgs)
-import Control.Exception (finally, catch, IOException)
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Monad (forM, filterM, liftM, when)
 
 writerNotifyPort = 1024
 readerNotifyPort = 1025
 
 type Client = (TChan (), Handle)
 
-main :: IO ()
-main = withSocketsDo $ do
+serveMain :: IO ()
+serveMain = do
   writerNotifySocket <- listenOn $ PortNumber writerNotifyPort
   readerNotifySocket <- listenOn $ PortNumber readerNotifyPort
   serve writerNotifySocket readerNotifySocket
@@ -30,7 +32,9 @@ serve writerNotifySocket readerNotifySocket = do
   forkIO $ acceptLoop writerNotifySocket acceptWriterChan
   acceptReaderChan <- atomically newTChan
   forkIO $ acceptLoop readerNotifySocket acceptReaderChan
-  mainLoop writerNotifySocket readerNotifySocket acceptChan [] []
+  putStrLn "serving"
+  mainLoop writerNotifySocket readerNotifySocket acceptWriterChan
+    acceptReaderChan[] []
 
 acceptLoop :: Socket -> TChan Client -> IO ()
 acceptLoop sock chan = forever $ do
@@ -50,27 +54,43 @@ listenLoop act chan = sequence_ (repeat (act >>= atomically . writeTChan chan))
 
 mainLoop :: Socket -> Socket -> TChan Client -> TChan Client -> [Client] ->
   [Client] -> IO ()
-mainLoop writerNotifySocket readerNotifySocket aceptWriterChan
+mainLoop writerNotifySocket readerNotifySocket acceptWriterChan
     acceptReaderChan writerClients readerClients = do
   r <- atomically $
-    (Left `fmap` readTChan acceptChan) `orElse`
-    (Right `fmap` tselect clients)
+    (Left . Left <$> readTChan acceptWriterChan) `orElse`
+    (Left . Right <$> readTChan acceptReaderChan) `orElse`
+    (Right <$> tselect writerClients)
   case r of
-    Left (ch, h) -> do
-      putStrLn "new client"
-      mainLoop sock acceptChan $ (ch, h):clients
-    Right (s, hSender) -> do
-      putStrLn $ "data: " ++ s
-      clients' <- forM clients $ \ c@(_, h) -> do
-        when (h /= hSender) $ do
-          hPutStrLn h "."
-          hFlush h
-        return [c]
-        `catch` (\ (_ :: IOException) -> hClose h >> return [])
+    Left (Left (ch, h)) -> do
+      putStrLn "new writer"
+      mainLoop writerNotifySocket readerNotifySocket acceptWriterChan
+        acceptReaderChan ((ch, h) : writerClients) readerClients
+    Left (Right (ch, h)) -> do
+      putStrLn "new reader"
+      mainLoop writerNotifySocket readerNotifySocket acceptWriterChan
+        acceptReaderChan writerClients ((ch, h) : readerClients)
+    Right (s, h) -> do
+      putStrLn "write"
+      print $ length writerClients
+      print $ length readerClients
+      writerClients' <- forM writerClients $ \ c@(_, h) -> do
+        hFlush h
+        return $ Just c
+        `catch` (\ (_ :: IOException) -> hClose h >> return Nothing)
+      readerClients' <- forM readerClients $ \ c@(_, h) -> do
+        hPutStrLn h "."
+        hFlush h
+        return $ Just c
+        `catch` (\ (_ :: IOException) -> hClose h >> return Nothing)
       let
-        dropped = length $ filter null clients'
-      when (dropped > 0) $ putStrLn ("clients lost: " ++ show dropped)
-      mainLoop sock acceptChan $ concat clients'
+        droppedWriters = length $ filter isNothing writerClients'
+        droppedReaders = length $ filter isNothing readerClients'
+      when (droppedWriters > 0) $
+        putStrLn ("writers lost: " ++ show droppedWriters)
+      when (droppedReaders > 0) $
+        putStrLn ("readers lost: " ++ show droppedReaders)
+      mainLoop writerNotifySocket readerNotifySocket acceptWriterChan
+        acceptReaderChan (catMaybes writerClients') (catMaybes readerClients')
 
 tselect :: [(TChan a, h)] -> STM (a, h)
 tselect = foldl orElse retry .

@@ -1,14 +1,13 @@
 module Main where
 
+import Control.Applicative
 import Control.Monad
 import Data.Maybe
 import Network
-import System.Console.GetOpt
-import System.Directory
+import Serve
 import System.Environment
-import System.FilePath
+import System.Console.GetOpt
 import System.IO
-import System.Posix.IO
 
 data MemoMode = MemoRead | MemoWrite | MemoServe
 
@@ -28,6 +27,8 @@ options = [
   Option "h" ["help"] (NoArg (\ o -> o {optHelp = True})) "",
   Option "r" ["read"] (NoArg (\ o -> o {optMode = Just MemoRead}))
     "Read messages as they appear.",
+  Option "s" ["serve"] (NoArg (\ o -> o {optMode = Just MemoServe}))
+    "Connect writes to reads.",
   Option "w" ["write"] (NoArg (\ o -> o {optMode = Just MemoWrite}))
     "Accept new messages on stdin."
   ]
@@ -36,24 +37,23 @@ persistAtLeastSecs :: Int
 persistAtLeastSecs = 5 * 60
 
 memoplex :: MemoMode -> IO ()
-memoplex mode = do
-  home <- getHomeDirectory
-  let
-    memoDir = home </> ".memoplex"
-    memoComm = memoDir </> "comm"
-  createDirectoryIfMissing True memoDir
+memoplex mode = withSocketsDo $ do
   case mode of
     MemoRead -> do
-      doesFileExist memoComm >>= \ r -> unless r (writeFile memoComm "")
-      fd <- openFd memoComm ReadOnly Nothing defaultFileFlags
-      epoll <- create (fromJust $ toSize 10)
-      evDesc <- add epoll () [inEvent] fd
-      events <- wait (fromJust $ toDuration 10) epoll
-      close epoll
-      closeFd fd
-      print $ length events
+      h <- connectTo "localhost" (PortNumber readerNotifyPort)
+      -- todo: initial db stuff
+      ls <- lines <$> hGetContents h
+      flip mapM_ ls $ \ l -> do
+        print "message."
     MemoWrite -> do
-      writeFile memoComm "."
+      h <- connectTo "localhost" (PortNumber writerNotifyPort)
+      ls <- lines <$> getContents
+      flip mapM_ ls $ \ l -> do
+        -- todo: db stuff with l
+        print $ "dealing with " ++ l
+        hPutStrLn h "."
+        hFlush h
+    MemoServe -> serveMain
 
 main :: IO ()
 main = withSocketsDo $ do
