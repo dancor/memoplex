@@ -1,13 +1,23 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Trans
+import Data.List
 import Data.Maybe
+import Database.PostgreSQL.Enumerator
 import Network
 import Serve
 import System.Environment
 import System.Console.GetOpt
 import System.IO
+
+-- idk why this is needed?
+instance Applicative (DBM mark sess) where
+  pure = return
+  (<*>) = ap
 
 data MemoMode = MemoRead | MemoWrite | MemoServe
 
@@ -33,27 +43,63 @@ options = [
     "Accept new messages on stdin."
   ]
 
-persistAtLeastSecs :: Int
-persistAtLeastSecs = 5 * 60
+oneIntIteratee :: (Monad m) => Int -> IterAct m Int
+oneIntIteratee = const . return . Left
+
+--insertMemo :: String -> IO Int
+insertMemo s = doQuery (sqlbind
+  "INSERT INTO memoplex (memo) VALUES (?) RETURNING num"
+  [bindP s])
+  oneIntIteratee undefined
+  <* commit
+
+intStrDIteratee :: (Monad m) => Int -> String -> String ->
+  IterAct m [(Int, (String, String))]
+intStrDIteratee a b c accum = result' $ (a, (b, c)) : accum
+
+--readNewMemos :: Int -> IO [(Int, String)]
+readNewMemos (n :: Int) = doQuery (sqlbind
+  "SELECT num, memo, time FROM memoplex WHERE num > ? AND \
+  \time > now() - interval '5 minutes' ORDER BY num DESC"
+  [bindP n])
+  intStrDIteratee []
+  <* commit
+
+markMemosSeen [] = return 0
+markMemosSeen ns = execDML (cmdbind
+  ("UPDATE memoplex SET seen = TRUE WHERE num in (" ++
+    intercalate ", " ["?" | _ <- ns] ++ ")")
+  (map bindP ns))
+  <* commit
+
+io :: (MonadIO m) => IO a -> m a
+io = liftIO
+
+--memoReadMore :: Int -> IO ()
+memoRead h lastMemoNum = do
+  memos <- readNewMemos lastMemoNum
+  io $ mapM_ (putStrLn . uncurry (\ a b -> a ++ " (" ++ b ++ ")") . snd) memos
+  let
+    seenNums = map fst memos
+    lastMemoNum' = maximum (lastMemoNum:seenNums)
+  markMemosSeen seenNums
+  io $ hGetLine h
+  memoRead h lastMemoNum'
 
 memoplex :: MemoMode -> IO ()
-memoplex mode = withSocketsDo $ do
-  case mode of
+memoplex mode = withSocketsDo $
+  withSession (connect [CAdbname "me_log"]) $ case mode of
     MemoRead -> do
-      h <- connectTo "localhost" (PortNumber readerNotifyPort)
-      -- todo: initial db stuff
-      ls <- lines <$> hGetContents h
-      flip mapM_ ls $ \ l -> do
-        print "message."
+      h <- io $ connectTo "localhost" (PortNumber readerNotifyPort)
+      memoRead h 0
     MemoWrite -> do
-      h <- connectTo "localhost" (PortNumber writerNotifyPort)
-      ls <- lines <$> getContents
+      h <- io $ connectTo "localhost" (PortNumber writerNotifyPort)
+      ls <- io $ lines <$> getContents
       flip mapM_ ls $ \ l -> do
-        -- todo: db stuff with l
-        print $ "dealing with " ++ l
-        hPutStrLn h "."
-        hFlush h
-    MemoServe -> serveMain
+        insertMemo l
+        io $ hPutStrLn h "."
+        io $ hFlush h
+    MemoServe -> io serveMain
 
 main :: IO ()
 main = withSocketsDo $ do

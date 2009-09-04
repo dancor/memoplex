@@ -1,0 +1,3 @@
+#!/bin/sh
+echo 'CREATE DATABASE me_log;' | psql template1
+echo 'CREATE TABLE memoplex (num SERIAL, time TIMESTAMP NOT NULL DEFAULT now(), memo TEXT NOT NULL, seen BOOL NOT NULL DEFAULT FALSE)' | psql me_log
