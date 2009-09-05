@@ -78,10 +78,13 @@ io = liftIO
 --memoReadMore :: Int -> IO ()
 memoRead h lastMemoNum = do
   memos <- readNewMemos lastMemoNum
-  io $ mapM_ (putStrLn . uncurry (\ a b -> a ++ " (" ++ b ++ ")") . snd) memos
   let
+    -- ghetto date string manipulation
+    showMemo (s, time) = s ++ " " ++ take 8 (drop 11 time)
     seenNums = map fst memos
     lastMemoNum' = maximum (lastMemoNum:seenNums)
+  io $ mapM_ (putStrLn . showMemo . snd) memos
+  io . when (null memos) $ putStrLn "."
   markMemosSeen seenNums
   io $ hGetLine h
   memoRead h lastMemoNum'
@@ -103,6 +106,7 @@ memoplex mode = withSocketsDo $
 
 main :: IO ()
 main = withSocketsDo $ do
+  hSetBuffering stdout LineBuffering
   argsOrig <- getArgs
   let
     usage = "usage:"
