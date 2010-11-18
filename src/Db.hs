@@ -21,8 +21,8 @@ readPrevMemos c =
     \WHERE memo_seen = FALSE ORDER BY memo_time DESC"
     [])
 
-readMemo :: Connection -> MemoId -> IO (Maybe Memo)
-readMemo c n = 
+getMemo :: Connection -> MemoId -> IO (Maybe Memo)
+getMemo c n = 
   listToMaybe . map (\ [s, t] -> Memo n (fromSql s) (fromSql t)) <$> 
   withTransaction c (\ t -> quickQuery t
     "SELECT memo_text, memo_time FROM memoplex \
