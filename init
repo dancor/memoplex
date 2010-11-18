@@ -2,3 +2,8 @@
 echo 'CREATE DATABASE me_log;' | psql template1
 #echo 'CREATE TABLE memoplex (num SERIAL, time TIMESTAMP NOT NULL DEFAULT now(), memo TEXT NOT NULL, seen BOOL NOT NULL DEFAULT FALSE)' | psql me_log
 echo 'CREATE TABLE memoplex (memo_id INTEGER PRIMARY KEY, memo_time TIMESTAMP NOT NULL DEFAULT now(), memo_text TEXT NOT NULL, memo_seen BOOL NOT NULL DEFAULT FALSE)' | psql me_log
+
+mkdir -p ~/.memoplex
+rm -rf ~/.memoplex/seen
+umask u=rw,g=,o=
+mkfifo ~/.memoplex/seen

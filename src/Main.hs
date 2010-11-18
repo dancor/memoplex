@@ -13,14 +13,16 @@ import Database.HDBC
 import Network
 import Serve
 import System.Environment
+import System.FilePath
 import System.Console.GetOpt
 import System.IO
 import System.Random
 
-import Memo
 import Db
+import Memo
+import NotifOmg
 
-data MemoMode = MemoRead | MemoWrite | MemoServe
+data MemoMode = MemoRead | MemoWrite | MemoServe | MemoNotifOmg
 
 data Options = Options {
   optHelp :: Bool,
@@ -41,15 +43,22 @@ options = [
   Option "s" ["serve"] (NoArg (\ o -> o {optMode = Just MemoServe}))
     "Connect writes to reads.",
   Option "w" ["write"] (NoArg (\ o -> o {optMode = Just MemoWrite}))
-    "Accept new messages on stdin."
+    "Accept new messages on stdin.",
+  Option "N" ["notifieromg"] (NoArg (\ o -> o {optMode = Just MemoNotifOmg}))
+    "Connect to custom terminal-based notifier."
   ]
 
 memoplex :: MemoMode -> IO ()
-memoplex mode = handleSqlError $ do
-  c <- dbConn
+memoplex mode = do
+  home <- getEnv "HOME"
+  let
+    dir = home </> ".memoplex"
+    readF = dir </> "read"
+    writeF = dir </> "write"
   case mode of
-    MemoRead -> do
-      h <- connectTo "localhost" (PortNumber readerNotifyPort)
+    MemoRead -> handleSqlError $ do
+      c <- dbConn
+      h <- connectTo "localhost" $ UnixSocket readF
       memos <- readPrevMemos c
       mapM_ (putStrLn . showMemo) memos
       loadedMemoIds <- newMVar $ map memoId memos
@@ -60,15 +69,19 @@ memoplex mode = handleSqlError $ do
           modifyMVar_ loadedMemoIds (return . (memoId m:))) memo
       forever $ getLine >> modifyMVar_ loadedMemoIds ((>> return []) . 
         mapM_ ((>> hFlush h) . hPutStrLn h . show))
-    MemoWrite -> do
-      h <- connectTo "localhost" (PortNumber writerNotifyPort)
+    MemoWrite -> handleSqlError $ do
+      c <- dbConn
+      h <- connectTo "localhost" $ UnixSocket writeF
       ls <- lines <$> getContents
       forM_ ls $ \ l -> do
         n <- intToId <$> randomIO
         insertMemo c n l
         hPutStrLn h $ show n
         hFlush h
-    MemoServe -> serveMain c
+    MemoServe -> handleSqlError $ do
+      c <- dbConn
+      serveMain c dir readF writeF
+    MemoNotifOmg -> notifOmg home
 
 main :: IO ()
 main = withSocketsDo $ do

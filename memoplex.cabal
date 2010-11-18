@@ -6,7 +6,8 @@ author:          dan corson <danl@alum.mit.edu>
 synopsis:        notifier service
 build-type:      Simple
 build-depends:   base >= 4, haskell98, mtl, network, random, stm, HDBC,
-                 HDBC-postgresql
+                 HDBC-postgresql, filepath, unix, directory, ansicolor,
+                 process
 
 executable:      memoplex
 main-is:         Main.hs

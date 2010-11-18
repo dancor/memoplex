@@ -1,8 +1,8 @@
 module Memo where
 
-import Data.Word
+import Data.Int
 
-type MemoId = Word32
+type MemoId = Int32
 type MemoTime = String
 
 data Memo = Memo {
