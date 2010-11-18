@@ -1,36 +1,44 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans
+import Data.Int
 import Data.List
 import Data.Maybe
+import Database.Enumerator
 import Database.PostgreSQL.Enumerator
 import Network
 import Serve
 import System.Environment
 import System.Console.GetOpt
 import System.IO
+import System.Random
 
--- idk why this is needed?
-instance Applicative (DBM mark sess) where
-  pure = return
-  (<*>) = ap
+type MemoId = Int32
+type MemoTime = String
 
 data MemoMode = MemoRead | MemoWrite | MemoServe
+
+data Memo = Memo MemoId String MemoTime
 
 data Options = Options {
   optHelp :: Bool,
   optMode :: Maybe MemoMode
-}
+  }
+
+instance Applicative (DBM mark sess) where
+  pure = return
+  (<*>) = ap
 
 defOpts :: Options
 defOpts = Options {
   optHelp = False,
   optMode = Nothing
-}
+  }
 
 options :: [OptDescr (Options -> Options)]
 options = [
@@ -43,64 +51,76 @@ options = [
     "Accept new messages on stdin."
   ]
 
-oneIntIteratee :: (Monad m) => Int -> IterAct m Int
-oneIntIteratee = const . return . Left
+idToInt :: MemoId -> Int
+idToInt = fromIntegral
 
---insertMemo :: String -> IO Int
-insertMemo s = doQuery (sqlbind
-  "INSERT INTO memoplex (memo) VALUES (?) RETURNING num"
-  [bindP s])
-  oneIntIteratee undefined
+intToId :: Int -> MemoId
+intToId = fromIntegral
+
+oneIdIteratee :: (Monad m) => Int -> IterAct m MemoId
+oneIdIteratee = const . return . Left . intToId
+
+--insertMemo :: MemoId -> String -> IO Int
+insertMemo :: 
+  (Statement stmt sess q,
+  QueryIteratee (DBM mark sess) q i Int ColumnBuffer,
+  IQuery q sess ColumnBuffer) =>
+  MemoId -> String -> DBM mark sess MemoId
+insertMemo n s = doQuery (sqlbind
+  "INSERT INTO memoplex (memo_id, memo_text) VALUES (?, ?) RETURNING memo_id"
+  [bindP $ idToInt n, bindP s])
+  oneIdIteratee undefined
   <* commit
 
-intStrDIteratee :: (Monad m) => Int -> String -> String ->
-  IterAct m [(Int, (String, String))]
-intStrDIteratee a b c accum = result' $ (a, (b, c)) : accum
+memoIteratee :: (Monad m) => Int -> String -> MemoTime ->
+  IterAct m [Memo]
+memoIteratee i s t accum = result' $ Memo (intToId i) s t : accum
 
---readNewMemos :: Int -> IO [(Int, String)]
-readNewMemos (n :: Int) = doQuery (sqlbind
-  "SELECT num, memo, time FROM memoplex WHERE num > ? AND \
-  \time > now() - interval '5 minutes' ORDER BY num DESC"
-  [bindP n])
-  intStrDIteratee []
+--readPrevMemos :: IO [Memo]
+readPrevMemos = doQuery (sql
+  "SELECT memo_id, memo_text, memo_time FROM memoplex \
+  \WHERE seen = FALSE ORDER BY memo_time DESC")
+  memoIteratee []
+  <* commit
+
+--readMemo n :: MemoId -> Maybe Memo
+readMemo n = listToMaybe <$> doQuery (sqlbind
+  "SELECT memo_text, memo_time FROM memoplex \
+  \WHERE memo_id = ? AND seen = FALSE"
+  [bindP $ idToInt n])
+  (memoIteratee $ idToInt n) []
   <* commit
 
 markMemosSeen [] = return 0
 markMemosSeen ns = execDML (cmdbind
-  ("UPDATE memoplex SET seen = TRUE WHERE num in (" ++
+  ("UPDATE memoplex SET seen = TRUE WHERE memo_id in (" ++
     intercalate ", " ["?" | _ <- ns] ++ ")")
-  (map bindP ns))
+  (map (bindP . idToInt) ns))
   <* commit
 
 io :: (MonadIO m) => IO a -> m a
 io = liftIO
 
---memoReadMore :: Int -> IO ()
-memoRead h lastMemoNum = do
-  memos <- readNewMemos lastMemoNum
-  let
-    -- ghetto date string manipulation
-    showMemo (s, time) = s ++ " " ++ take 8 (drop 11 time)
-    seenNums = map fst memos
-    lastMemoNum' = maximum (lastMemoNum:seenNums)
-  io $ mapM_ (putStrLn . showMemo . snd) memos
-  io . when (null memos) $ putStrLn "."
-  markMemosSeen seenNums
-  io $ hGetLine h
-  memoRead h lastMemoNum'
+showMemo :: Memo -> String
+showMemo (Memo n s t) = show n ++ ":" ++ t ++ ":" ++ s
 
 memoplex :: MemoMode -> IO ()
-memoplex mode = withSocketsDo $
-  withSession (connect [CAdbname "me_log"]) $ case mode of
+memoplex mode = withSocketsDo . withSession (connect [CAdbname "me_log"]) $ 
+  case mode of
     MemoRead -> do
       h <- io $ connectTo "localhost" (PortNumber readerNotifyPort)
-      memoRead h 0
+      --memos <- readPrevMemos
+      forever $ do
+        n <- io $ read <$> hGetLine h
+        m <- readMemo n
+        maybe (return ()) (io . putStrLn . showMemo) m
     MemoWrite -> do
       h <- io $ connectTo "localhost" (PortNumber writerNotifyPort)
       ls <- io $ lines <$> getContents
       flip mapM_ ls $ \ l -> do
-        insertMemo l
-        io $ hPutStrLn h "."
+        n <- io $ intToId <$> randomIO
+        insertMemo n l
+        io . hPutStrLn h $ show n
         io $ hFlush h
     MemoServe -> io serveMain
 
