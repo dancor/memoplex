@@ -4,13 +4,12 @@
 module Main where
 
 import Control.Applicative
+import Control.Concurrent
+import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Trans
-import Data.Int
-import Data.List
-import Data.Maybe
-import Database.Enumerator
-import Database.PostgreSQL.Enumerator
+import Database.HDBC
+--import Data.List
 import Network
 import Serve
 import System.Environment
@@ -18,21 +17,15 @@ import System.Console.GetOpt
 import System.IO
 import System.Random
 
-type MemoId = Int32
-type MemoTime = String
+import Memo
+import Db
 
 data MemoMode = MemoRead | MemoWrite | MemoServe
-
-data Memo = Memo MemoId String MemoTime
 
 data Options = Options {
   optHelp :: Bool,
   optMode :: Maybe MemoMode
   }
-
-instance Applicative (DBM mark sess) where
-  pure = return
-  (<*>) = ap
 
 defOpts :: Options
 defOpts = Options {
@@ -51,78 +44,31 @@ options = [
     "Accept new messages on stdin."
   ]
 
-idToInt :: MemoId -> Int
-idToInt = fromIntegral
-
-intToId :: Int -> MemoId
-intToId = fromIntegral
-
-oneIdIteratee :: (Monad m) => Int -> IterAct m MemoId
-oneIdIteratee = const . return . Left . intToId
-
---insertMemo :: MemoId -> String -> IO Int
-insertMemo :: 
-  (Statement stmt sess q,
-  QueryIteratee (DBM mark sess) q i Int ColumnBuffer,
-  IQuery q sess ColumnBuffer) =>
-  MemoId -> String -> DBM mark sess MemoId
-insertMemo n s = doQuery (sqlbind
-  "INSERT INTO memoplex (memo_id, memo_text) VALUES (?, ?) RETURNING memo_id"
-  [bindP $ idToInt n, bindP s])
-  oneIdIteratee undefined
-  <* commit
-
-memoIteratee :: (Monad m) => Int -> String -> MemoTime ->
-  IterAct m [Memo]
-memoIteratee i s t accum = result' $ Memo (intToId i) s t : accum
-
---readPrevMemos :: IO [Memo]
-readPrevMemos = doQuery (sql
-  "SELECT memo_id, memo_text, memo_time FROM memoplex \
-  \WHERE seen = FALSE ORDER BY memo_time DESC")
-  memoIteratee []
-  <* commit
-
---readMemo n :: MemoId -> Maybe Memo
-readMemo n = listToMaybe <$> doQuery (sqlbind
-  "SELECT memo_text, memo_time FROM memoplex \
-  \WHERE memo_id = ? AND seen = FALSE"
-  [bindP $ idToInt n])
-  (memoIteratee $ idToInt n) []
-  <* commit
-
-markMemosSeen [] = return 0
-markMemosSeen ns = execDML (cmdbind
-  ("UPDATE memoplex SET seen = TRUE WHERE memo_id in (" ++
-    intercalate ", " ["?" | _ <- ns] ++ ")")
-  (map (bindP . idToInt) ns))
-  <* commit
-
-io :: (MonadIO m) => IO a -> m a
-io = liftIO
-
-showMemo :: Memo -> String
-showMemo (Memo n s t) = show n ++ ":" ++ t ++ ":" ++ s
-
 memoplex :: MemoMode -> IO ()
-memoplex mode = withSocketsDo . withSession (connect [CAdbname "me_log"]) $ 
+memoplex mode = handleSqlError $ do
+  c <- dbConn
   case mode of
     MemoRead -> do
-      h <- io $ connectTo "localhost" (PortNumber readerNotifyPort)
-      --memos <- readPrevMemos
-      forever $ do
-        n <- io $ read <$> hGetLine h
-        m <- readMemo n
-        maybe (return ()) (io . putStrLn . showMemo) m
+      h <- connectTo "localhost" (PortNumber readerNotifyPort)
+      memos <- readPrevMemos c
+      mapM_ (putStrLn . showMemo) memos
+      loadedMemoIds <- newMVar $ map memoId memos
+      forkIO . forever $ do
+        n <- read <$> hGetLine h
+        memo <- readMemo c n
+        maybe (return ()) (\ m -> putStrLn (showMemo m) >> 
+          modifyMVar_ loadedMemoIds (return . (memoId m:))) memo
+      forever $ getLine >> modifyMVar_ loadedMemoIds ((>> return []) . 
+        mapM_ ((>> hFlush h) . hPutStrLn h . show))
     MemoWrite -> do
-      h <- io $ connectTo "localhost" (PortNumber writerNotifyPort)
-      ls <- io $ lines <$> getContents
-      flip mapM_ ls $ \ l -> do
-        n <- io $ intToId <$> randomIO
-        insertMemo n l
-        io . hPutStrLn h $ show n
-        io $ hFlush h
-    MemoServe -> io serveMain
+      h <- connectTo "localhost" (PortNumber writerNotifyPort)
+      ls <- lines <$> getContents
+      forM_ ls $ \ l -> do
+        n <- intToId <$> randomIO
+        insertMemo c n l
+        hPutStrLn h $ show n
+        hFlush h
+    MemoServe -> serveMain c
 
 main :: IO ()
 main = withSocketsDo $ do
