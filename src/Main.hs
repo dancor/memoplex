@@ -19,6 +19,24 @@ import Memo
 import NotifOmg
 import Opts
 
+main :: IO ()
+main = withSocketsDo $ do
+  hSetBuffering stdout LineBuffering
+  argsOrig <- getArgs
+  let
+    usage = "usage:"
+    showUsage = (++ usageInfo usage options)
+    (opts, args) = case getOpt Permute options argsOrig of
+      (o, n, []) -> (foldl (flip id) defOpts o, n)
+      (_, _, errs) -> error . showUsage $ concat errs
+  if optHelp opts
+    then do
+      progName <- getProgName
+      putStr $ progName ++ ": " ++ showUsage ""
+    else case optMode opts of
+      Nothing -> error $ showUsage "Must specify a mode of operation.\n"
+      Just mode -> memoplex opts mode
+
 memoplex :: Options -> MemoMode -> IO ()
 memoplex opts mode = do
   home <- getEnv "HOME"
@@ -42,7 +60,7 @@ memoplex opts mode = do
         memoMaybe <- getMemo c n
         maybe (return ()) processMemo memoMaybe
       forever $ getLine >> modifyMVar_ loadedMemoIds ((>> return []) . 
-        mapM_ ((>> hFlush h) . hPutStrLn h . show))
+        mapM_ ((>> hFlush h) . (\ l -> print l >> hPutStrLn h l) . show))
     MemoWrite -> handleSqlError $ do
       c <- dbConn
       h <- connectTo "localhost" $ UnixSocket writeF
@@ -56,21 +74,3 @@ memoplex opts mode = do
       c <- dbConn
       serveMain opts c dir readF writeF
     MemoNotifOmg -> notifOmg home
-
-main :: IO ()
-main = withSocketsDo $ do
-  hSetBuffering stdout LineBuffering
-  argsOrig <- getArgs
-  let
-    usage = "usage:"
-    showUsage = (++ usageInfo usage options)
-    (opts, args) = case getOpt Permute options argsOrig of
-      (o, n, []) -> (foldl (flip id) defOpts o, n)
-      (_, _, errs) -> error . showUsage $ concat errs
-  if optHelp opts
-    then do
-      progName <- getProgName
-      putStr $ progName ++ ": " ++ showUsage ""
-    else case optMode opts of
-      Nothing -> error $ showUsage "Must specify a mode of operation.\n"
-      Just mode -> memoplex opts mode

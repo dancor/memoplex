@@ -18,7 +18,7 @@ readPrevMemos c =
   map (\ [n, s, t] -> Memo (fromSql n) (fromSql s) (fromSql t)) <$> 
   withTransaction c (\ t -> quickQuery t
     "SELECT memo_id, memo_text, memo_time FROM memoplex \
-    \WHERE memo_seen = FALSE ORDER BY memo_time DESC"
+    \WHERE memo_seen = FALSE ORDER BY memo_time"
     [])
 
 getMemo :: Connection -> MemoId -> IO (Maybe Memo)
