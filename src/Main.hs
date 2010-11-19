@@ -48,14 +48,16 @@ memoplex opts mode = do
     dir = home </> ".memoplex"
     readF = dir </> "read"
     writeF = dir </> "write"
-    reHVar hVar = threadDelay 500000 >> catch 
-      (modifyMVar_ hVar $ \ _ -> connectTo "localhost" (UnixSocket readF))
+    reHVar hVar = threadDelay 500000 >> handle
       (\ (_ :: IOException) -> reHVar hVar)
+      (modifyMVar_ hVar $ \ h -> do
+        catch (hClose h) (\ (_ :: IOException) -> return ())
+        connectTo "localhost" (UnixSocket readF))
     tryHGet :: MVar Handle -> IO String
-    tryHGet hVar = catch 
+    tryHGet hVar = catch
       (readMVar hVar >>= hGetLine)
       (\ (_ :: IOException) -> reHVar hVar >> tryHGet hVar)
-    tryHPut hVar s = catch 
+    tryHPut hVar s = catch
       (readMVar hVar >>= \ h -> hPutStrLn h s >> hFlush h)
       (\ (_ :: IOException) -> reHVar hVar >> tryHPut hVar s)
   case mode of
@@ -74,7 +76,7 @@ memoplex opts mode = do
         n <- read <$> tryHGet hVar
         memoMaybe <- getMemo c n
         maybe (return ()) processMemo memoMaybe
-      forever $ getLine >> modifyMVar_ loadedMemoIds 
+      forever $ getLine >> modifyMVar_ loadedMemoIds
         ((>> return []) . mapM_ (tryHPut hVar . show))
     MemoWrite -> handleSqlError $ do
       c <- dbConn
