@@ -1,5 +1,6 @@
 module Memo where
 
+import Control.Arrow
 import Data.Int
 
 type MemoId = Int32
@@ -25,5 +26,5 @@ showMemo False (Memo n s t) = take 8 (drop 11 t) ++ [memoDelim] ++ s
 
 readMemo :: String -> Memo
 readMemo m = Memo (read p1) p3 p2 where
-  (p1, rest) = break (== memoDelim) m
-  (p2, p3) = break (== memoDelim) rest
+  (p1, rest) = second tail $ break (== memoDelim) m
+  (p2, p3) = second tail $ break (== memoDelim) rest
