@@ -1,11 +1,15 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 import Control.Applicative
 import Control.Concurrent
-import Control.Concurrent.MVar
+import Control.Concurrent.STM
+import Control.Exception
 import Control.Monad
 import Database.HDBC
 import Network
+import Prelude hiding (catch)
 import Serve
 import System.Environment
 import System.FilePath
@@ -44,10 +48,21 @@ memoplex opts mode = do
     dir = home </> ".memoplex"
     readF = dir </> "read"
     writeF = dir </> "write"
+    reHVar hVar = threadDelay 500000 >> catch 
+      (modifyMVar_ hVar $ \ _ -> connectTo "localhost" (UnixSocket readF))
+      (\ (_ :: IOException) -> reHVar hVar)
+    tryHGet :: MVar Handle -> IO String
+    tryHGet hVar = catch 
+      (readMVar hVar >>= hGetLine)
+      (\ (_ :: IOException) -> reHVar hVar >> tryHGet hVar)
+    tryHPut hVar s = catch 
+      (readMVar hVar >>= \ h -> hPutStrLn h s >> hFlush h)
+      (\ (_ :: IOException) -> reHVar hVar >> tryHPut hVar s)
   case mode of
     MemoRead -> handleSqlError $ do
       c <- dbConn
-      h <- connectTo "localhost" $ UnixSocket readF
+      h <- connectTo "localhost" (UnixSocket readF)
+      hVar <- newMVar h
       memos <- readPrevMemos c
       mapM_ (putStrLn . showMemo (optShowIds opts)) memos
       loadedMemoIds <- newMVar $ map memoId memos
@@ -56,14 +71,15 @@ memoplex opts mode = do
           putStrLn $ showMemo (optShowIds opts) m
           modifyMVar_ loadedMemoIds (return . (memoId m:))
       forkIO . forever $ do
-        n <- read <$> hGetLine h
+        n <- read <$> tryHGet hVar
         memoMaybe <- getMemo c n
         maybe (return ()) processMemo memoMaybe
-      forever $ getLine >> modifyMVar_ loadedMemoIds ((>> return []) . 
-        mapM_ ((>> hFlush h) . hPutStrLn h . show))
+      forever $ getLine >> modifyMVar_ loadedMemoIds 
+        --((>> return []) . mapM_ (tryHPut hVar . show))
+        ((>> return []) . mapM_ ((\ l -> print l >> tryHPut hVar l >> print l) . show))
     MemoWrite -> handleSqlError $ do
       c <- dbConn
-      h <- connectTo "localhost" $ UnixSocket writeF
+      h <- connectTo "localhost" (UnixSocket writeF)
       ls <- lines <$> getContents
       forM_ ls $ \ l -> do
         n <- intToId <$> randomIO

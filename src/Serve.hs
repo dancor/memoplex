@@ -42,7 +42,7 @@ serveMain opts conn dir readF writeF = do
     mChan <- newTChanIO
     pIns <- forM (optPullHosts opts) $ \ host -> do
       (pIn, pOut, pErr, pId) <-                                    
-        runInteractiveProcess "ssh" ["memoplex", "-ir"] Nothing Nothing
+        runInteractiveProcess "ssh" [host, "memoplex", "-ir"] Nothing Nothing
       -- check for eof/errors?
       forkIO . forever $ do
         memo <- readMemo <$> hGetLine pOut
