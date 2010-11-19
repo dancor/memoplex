@@ -75,8 +75,7 @@ memoplex opts mode = do
         memoMaybe <- getMemo c n
         maybe (return ()) processMemo memoMaybe
       forever $ getLine >> modifyMVar_ loadedMemoIds 
-        --((>> return []) . mapM_ (tryHPut hVar . show))
-        ((>> return []) . mapM_ ((\ l -> print l >> tryHPut hVar l >> print l) . show))
+        ((>> return []) . mapM_ (tryHPut hVar . show))
     MemoWrite -> handleSqlError $ do
       c <- dbConn
       h <- connectTo "localhost" (UnixSocket writeF)
