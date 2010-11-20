@@ -9,9 +9,12 @@ import Data.List
 import Memo
 
 insertMemo :: Connection -> MemoId -> String -> IO Integer
-insertMemo c n s = withTransaction c $ \ t -> run t
-  "INSERT INTO memoplex (memo_id, memo_text) VALUES (?, ?) RETURNING memo_id"
-  [toSql $ idToInt n, toSql s]
+insertMemo c n s = withTransaction c $ \ t -> do
+  run t "DELETE FROM memoplex WHERE memo_id = ?" [nSql]
+  run t
+    "INSERT INTO memoplex (memo_id, memo_text) VALUES (?, ?) RETURNING memo_id"
+    [nSql, toSql s]
+  where nSql = toSql $ idToInt n
 
 readPrevMemos :: Connection -> IO [Memo]
 readPrevMemos c =
