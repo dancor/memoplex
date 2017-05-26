@@ -5,9 +5,18 @@ license-file:    LICENSE
 author:          dan corson <danl@alum.mit.edu>
 synopsis:        notifier service
 build-type:      Simple
-build-depends:   base >= 4, haskell98, mtl, network, random, stm, HDBC,
-                 HDBC-postgresql, filepath, unix, directory, ansicolor,
-                 process
+build-depends:
+    base
+  , directory
+  , filepath
+  , HDBC
+  , HDBC-sqlite3
+  , mtl
+  , network
+  , process
+  , random
+  , stm
+  , unix
 
 executable:      memoplex
 main-is:         Main.hs

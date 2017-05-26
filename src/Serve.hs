@@ -8,7 +8,7 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
-import Database.HDBC.PostgreSQL
+import Database.HDBC.Sqlite3
 import Data.Maybe
 import Network
 import System.Directory
@@ -23,13 +23,11 @@ import Select
 
 type Client = (TChan String, Handle)
 
-serveMain :: Options -> Connection -> FilePath -> FilePath -> FilePath -> IO ()
-serveMain opts conn dir readF writeF = do
+serveMain :: Options -> FilePath -> FilePath -> FilePath -> IO ()
+serveMain opts dir readF writeF = do
   createDirectoryIfMissing False dir
   doesFileExist readF >>= flip when (removeFile readF)
   doesFileExist writeF >>= flip when (removeFile writeF)
-  -- wtf?
-  --oldUmask <- setFileCreationMask (ownerReadMode `unionFileModes` ownerWriteMode)
   oldUmask <- setFileCreationMask 127
   rSock <- listenOn $ UnixSocket readF
   wSock <- listenOn $ UnixSocket writeF
@@ -46,10 +44,10 @@ serveMain opts conn dir readF writeF = do
       -- check for eof/errors?
       forkIO . forever $ do
         memo <- readMemo <$> hGetLine pOut
-        insertMemo conn (memoId memo) (memoStr memo)
+        withDbConn dir $ \c -> insertMemo c (memoId memo) (memoStr memo)
         atomically . writeTChan mChan . show $ memoId memo
       return pIn
-    mainLoop (State conn rSock wSock rChan wChan [] [] mChan pIns)) `finally` 
+    mainLoop (State dir rSock wSock rChan wChan [] [] mChan pIns)) `finally` 
       (sClose rSock >> sClose wSock)
 
 acceptLoop :: Socket -> TChan Client -> IO ()
@@ -74,7 +72,7 @@ tellClis clis s = forM_ clis $ \ (_, h) -> forkIO $ do
   hFlush h
 
 data State = State {
-  stConn :: Connection,
+  stDir :: FilePath,
   stRSock :: Socket, 
   stWSock :: Socket,
   stRChan :: TChan Client,
@@ -98,7 +96,7 @@ mainLoop st =
     mainLoop $ st {stWClis = c : stWClis st},
   Sel (tselect $ stRClis st) $ \ (s, _) -> do
     putStrLn $ "read:" ++ s
-    markMemosSeen (stConn st) [read s]
+    withDbConn (stDir st) $ \c -> markMemosSeen c [read s]
     mapM_ (\ h -> forkIO $ hPutStrLn h "" >> hFlush h) $ stPIns st
     mainLoop st,
   Sel (tselect $ stWClis st) $ \ (s, _) -> do

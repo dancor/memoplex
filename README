@@ -1,7 +1,7 @@
 memoplex is a notifier service.
 one-line messages are sent in to stdin:
 
-~ echo hi | memoplex
+~ echo hi | memoplex -w
 
 and messages are read with -r:
 
@@ -22,4 +22,3 @@ to recap:
 - persist messages until some client reads them
 - messages can be sent to multiple clients
 - any client can submit a message
-- postgres-backed
