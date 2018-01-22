@@ -31,7 +31,7 @@ pop home chan = do
     forever $ hGetLine h >> writeChan chan Nothing
 
 getC :: [Char] -> [Char]
-getC a = head . (++ [C.yellow]) . map snd $ filter (($ a) . fst) getCFs
+getC a = head . (++ [C.green]) . map snd $ filter (($ a) . fst) getCFs
 
 getCFs :: [([Char] -> Bool, [Char])]
 getCFs =
